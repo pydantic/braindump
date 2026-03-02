@@ -16,10 +16,14 @@ def main(
     ctx: typer.Context,
     repo: str = typer.Option("", envvar="BRAINDUMP_REPO", help="GitHub repo (owner/repo)"),
     model: str = typer.Option(
-        "", envvar="BRAINDUMP_MODEL", help="LLM model (e.g. gateway/anthropic:claude-sonnet-4-5, openai:gpt-4o)"
+        "",
+        envvar="BRAINDUMP_MODEL",
+        help="LLM model (e.g. gateway/anthropic:claude-sonnet-4-5, openai:gpt-4o)",
     ),
     embedding_model: str = typer.Option(
-        "", envvar="BRAINDUMP_EMBEDDING_MODEL", help="Embedding model (e.g. gateway/openai:text-embedding-3-small)"
+        "",
+        envvar="BRAINDUMP_EMBEDDING_MODEL",
+        help="Embedding model (e.g. gateway/openai:text-embedding-3-small)",
     ),
 ) -> None:
     """Braindump: extract coding rules from PR review comments."""

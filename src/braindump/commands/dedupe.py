@@ -692,7 +692,9 @@ async def deduplicate_rules(
         pass2_by_category.setdefault(rule["category"], []).append(rule)
 
     # Only re-review categories that had merges in Pass 2 and still have 3+ rules
-    pass2_merged_cats = {entry["category"] for entry in merge_log if entry["pass"] == "category_review"}
+    pass2_merged_cats = {
+        entry["category"] for entry in merge_log if entry["pass"] == "category_review"
+    }
     cats_to_recheck = {
         cat: cat_rules
         for cat, cat_rules in pass2_by_category.items()
@@ -733,9 +735,7 @@ async def deduplicate_rules(
                         if stats:
                             progress.update(task_id, cost=format_cost(stats.total_cost))
 
-            await asyncio.gather(
-                *[recheck_one_category(cat) for cat in sorted(cats_to_recheck)]
-            )
+            await asyncio.gather(*[recheck_one_category(cat) for cat in sorted(cats_to_recheck)])
 
         logfire.info(
             "Pass 3 complete",
@@ -765,9 +765,7 @@ DEDUPE_FILES = [
 ]
 
 
-def _save_embeddings(
-    rules: list[dict], embeddings: list[list[float]], output_dir: Path
-) -> None:
+def _save_embeddings(rules: list[dict], embeddings: list[list[float]], output_dir: Path) -> None:
     """Save embeddings and keys to disk for resume."""
     keys = [rule["text"] for rule in rules]
     np.savez_compressed(output_dir / "embeddings.npz", embeddings=np.array(embeddings))
@@ -863,9 +861,10 @@ async def _async_run(
         console.print("No rules to deduplicate")
         return None
 
-    with stage_progress(
-        "Dedupe", is_pipeline=is_pipeline, cost_path=output_dir / "cost.json"
-    ) as (progress, stats):
+    with stage_progress("Dedupe", is_pipeline=is_pipeline, cost_path=output_dir / "cost.json") as (
+        progress,
+        stats,
+    ):
         stats.set("input_rules", len(rules))
 
         # Phase 1: Embeddings (with disk cache)

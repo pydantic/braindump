@@ -50,9 +50,7 @@ def run(
     skip: list[str] | None = typer.Option(None, help="Skip specific stages (repeatable)"),
     authors: str = typer.Option("all", help="Author filter for extract stage"),
     since: str | None = typer.Option(None, help="Date filter for download stage (YYYY-MM-DD)"),
-    min_score: float | None = typer.Option(
-        None, help="Minimum rule score (default: 0.5)"
-    ),
+    min_score: float | None = typer.Option(None, help="Minimum rule score (default: 0.5)"),
     max_rules: int | None = typer.Option(
         None, "--max-rules", help="Maximum number of rules to include in group stage (top-scored)"
     ),
