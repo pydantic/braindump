@@ -37,15 +37,17 @@ dependencies = [
 anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.0"]
 all = ["braindump[anthropic,openai]"]
+
+[project.scripts]
+braindump = "braindump.cli:app"
+
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pyright>=1.1",
     "ruff>=0.8",
 ]
-
-[project.scripts]
-braindump = "braindump.cli:app"
 
 [build-system]
 requires = ["hatchling"]
