@@ -1,6 +1,6 @@
 # Braindump
 
-Extract coding rules from PR review comments and generate AGENTS.md files for any GitHub repository.
+Extract coding rules from PR review comments and generate `AGENTS.md` files for any GitHub repository.
 
 ## How it works
 
@@ -25,6 +25,8 @@ Each stage is resumable — if interrupted, it picks up from where it left off. 
 - A [Pydantic AI Gateway](https://ai.pydantic.dev/gateway/) API token (or direct provider API keys — see [Model configuration](#model-configuration))
 
 ## Setup
+
+The `braindump` CLI is not currently published on PyPI, so the first step is to clone this repo locally. Then run:
 
 ```bash
 # Install dependencies
@@ -51,6 +53,10 @@ Or set the repo once via environment variable:
 export BRAINDUMP_REPO=pydantic/pydantic-ai
 uv run braindump run --since 2025-10-01
 ```
+
+Note that this project is 100% vibecoded, and the pipeline and thresholds have been optimized for the [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) repo primarily. 
+If the pipeline generates unexpected rules for your repo, whether invalid or duplicate or otherwise unhelpful, you're encouraged to tell Claude (or your coding agent of choice) to investigate the issue (by referring to the generated rule IDs) and make changes to the pipeline until it does what you want.
+It's fine and expected if different teams use their own fork of `braindump` that evolves over time to meet their needs: there's no expectation that the version in this repo will work for absolutely everyone, so you don't need to upstream changes unless you beleive they are strictly better for every user than what came before.
 
 ## Commands
 
