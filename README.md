@@ -17,13 +17,62 @@ GitHub PR reviews → download → extract → synthesize → dedupe → place �
 
 1. **Download** — fetch PR data (reviews, comments, diffs) via `gh` CLI
 2. **Extract** — use Claude to identify actionable changes and generalizable rules from each comment (bot comments are filtered out automatically)
-3. **Synthesize** — embed generalizations, cluster by similarity, extract validated rules
+3. **Synthesize** — embed generalizations, cluster by similarity, extract validated rules. Each rule is scored based on the LLM's confidence multiplied by a factor for how many unique PRs the rule's evidence spans (1 PR = 0.6×, 2 = 0.85×, 3 = 0.95×, 4+ = 1.0×), so rules that came up across more reviews score higher.
 4. **Dedupe** — three-pass deduplication (embedding clusters + category review + post-consolidation review)
 5. **Place** — determine where each rule belongs (root, directory, file, cross-file), filtering by `min_score` floor (default 0.5)
 6. **Group** — filter by `min_score` threshold (default 0.5) and organize by topic for progressive disclosure
 7. **Generate** — rephrase rules and write final `AGENTS.md` files
 
 Each stage is resumable — if interrupted, it picks up from where it left off. Pass `--fresh` to any stage or `run` to wipe previous outputs and start clean.
+
+## Example
+
+As described in the ["Fighting Fire With Fire: How We're Scaling Open Source Code Review at Pydantic With AI"](https://pydantic.dev/articles/scaling-open-source-with-ai) blog post, we used `braindump` to turn the 4,668  PR review comments @DouweM made on `pydantic/pydantic-ai` between October 2025 and February 2026 into [149 rules](https://github.com/pydantic/pydantic-ai/blob/main/AGENTS.md#coding-guidelines) at a cost of just over $60:
+
+```
+$ uv run braindump --repo pydantic/pydantic-ai run --since 2025-10-01 --authors DouweM --max-rules=150
+
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃Stage         ┃ Status    ┃ Details                                ┃ Updated   ┃       Cost┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
+│download      │ done      │ 883 PRs | 10,020 review comments, 883  │ 11d ago   │           │
+│              │           │ diffs                                  │           │           │
+│extract       │ done      │ 4,668/10,020 comments → 3,851          │ 10d ago   │     $40.17│
+│              │           │ actionable, 817 rejected → 5,320       │           │           │
+│              │           │ generalizations                        │           │           │
+│synthesize    │ done      │ 5,320 generalizations → 3,004 in 1,054 │ 10d ago   │     $14.22│
+│              │           │ clusters, 2,316 unclustered → 1,238    │           │           │
+│              │           │ rules                                  │           │           │
+│              │           │               (similarity ≥ 0.65, min  │           │           │
+│              │           │ cluster size 2, coherence: 0.87)       │           │           │
+│dedupe        │ done      │ 1,238 → 1,014 rules (224 merged)       │ 4m ago    │      $5.12│
+│place         │ done      │ 1,014 → 197 rules placed (score ≥ 0.8) │ 1m ago    │      $2.14│
+│              │           │ | agents_md_root: 106, agents_md_dir:  │           │           │
+│              │           │ 85, cross_file: 5, file: 1             │           │           │
+│group         │ done      │ 150/197 rules (score ≥ 0.8) → 6        │ 0m ago    │      $0.09│
+│              │           │ locations | 109 inline, 40 in topics   │           │           │
+│generate      │ done      │ 6 AGENTS.md files, 3 topic docs (46    │ 0m ago    │      $0.83│
+│              │           │ KB) | root, docs, pydantic_ai_slim,    │           │           │
+│              │           │ pydantic_ai_slim/pydantic_ai,          │           │           │
+│              │           │ pydantic_ai_slim/pydantic_ai/models,   │           │           │
+│              │           │ tests                                  │           │           │
+└──────────────┴───────────┴────────────────────────────────────────┴───────────┴───────────┘
+
+Total cost: $62.57
+
+Pipeline complete!
+
+Generated files:
+  data/pydantic/pydantic-ai/7-generate/AGENTS.md
+  data/pydantic/pydantic-ai/7-generate/agent_docs/api-design.md
+  data/pydantic/pydantic-ai/7-generate/agent_docs/code-simplification.md
+  data/pydantic/pydantic-ai/7-generate/agent_docs/documentation.md
+  data/pydantic/pydantic-ai/7-generate/docs/AGENTS.md
+  data/pydantic/pydantic-ai/7-generate/pydantic_ai_slim/AGENTS.md
+  data/pydantic/pydantic-ai/7-generate/pydantic_ai_slim/pydantic_ai/AGENTS.md
+  data/pydantic/pydantic-ai/7-generate/pydantic_ai_slim/pydantic_ai/models/AGENTS.md
+  data/pydantic/pydantic-ai/7-generate/tests/AGENTS.md
+```
 
 ## Prerequisites
 
@@ -54,12 +103,9 @@ Run the full pipeline:
 uv run braindump --repo pydantic/pydantic-ai run --since 2025-10-01
 ```
 
-Or set the repo once via environment variable:
+This will include review comments by all non-bot authors; use `--authors` to limit this.
 
-```bash
-export BRAINDUMP_REPO=pydantic/pydantic-ai
-uv run braindump run --since 2025-10-01
-```
+This will write all rules to `AGENTS.md` that have a score of at least 0.5, which may end up being too many depending on how many source comments you have. To limit the output to the best rules, you can use the `--min-score` option. To determine an appropriate value that balances not missing important rules with not overloading the agent's context window, you can run the full pipeline, then use the [`group --preview`](#group--organize-by-topic) command to show a table of rule counts and marginal examples at different score thresholds, and then run again from the group stage using `run --from group --fresh --min-score=<score>`.
 
 ## Commands
 
