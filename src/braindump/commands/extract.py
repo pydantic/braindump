@@ -218,10 +218,10 @@ def filter_bots(comments: list[dict]) -> list[dict]:
     ]
 
 
-def filter_by_author(comments: list[dict], author: str | None) -> list[dict]:
-    if author is None:
+def filter_by_author(comments: list[dict], authors: set[str] | None) -> list[dict]:
+    if authors is None:
         return comments
-    return [c for c in comments if c.get("user", {}).get("login") == author]
+    return [c for c in comments if c.get("user", {}).get("login") in authors]
 
 
 def build_thread_map(comments: list[dict]) -> dict[int, list[dict]]:
@@ -528,10 +528,10 @@ def _run(
                 f"Filtered to {len(all_comments)} comments from PRs: {sorted(pr_numbers)}"
             )
 
-    author = None if authors == "all" else authors
-    if not is_pipeline and author:
-        console.print(f"Filtering to {author} comments...")
-    filtered_comments = filter_by_author(all_comments, author)
+    author_set = None if authors == "all" else {a.strip() for a in authors.split(",")}
+    if not is_pipeline and author_set:
+        console.print(f"Filtering to {', '.join(sorted(author_set))} comments...")
+    filtered_comments = filter_by_author(all_comments, author_set)
     if not is_pipeline:
         console.print(f"Found {len(filtered_comments)} comments to process")
 
@@ -574,7 +574,9 @@ def _run(
 
 def extract(
     ctx: typer.Context,
-    authors: str = typer.Option("all", help="Filter to specific author, or 'all'"),
+    authors: str = typer.Option(
+        "all", help="Filter to specific author(s), comma-separated, or 'all'"
+    ),
     limit: int | None = typer.Option(None, help="Limit number of comments to process"),
     random_sample: bool = typer.Option(False, "--random", help="Randomly sample comments"),
     seed: int = typer.Option(42, help="Random seed for reproducible sampling"),
