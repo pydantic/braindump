@@ -120,7 +120,7 @@ uv run braindump --repo owner/repo run [--from STAGE] [--skip STAGE ...] [--sinc
 - `--from`: Start from a specific stage (e.g. `--from synthesize`)
 - `--skip`: Skip stages (repeatable, e.g. `--skip download --skip extract`)
 - `--since`: Date filter for download (YYYY-MM-DD)
-- `--authors`: Author filter for extract (default: `all`)
+- `--authors`: Author filter for extract, comma-separated (default: `all`)
 - `--min-score`: Override rule score threshold (default: 0.5)
 - `--max-rules N`: Cap the number of rules in group stage (top-scored)
 - `--fresh`: Wipe all stage outputs and start from scratch
