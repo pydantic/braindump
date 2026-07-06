@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from collections import defaultdict
 from decimal import Decimal
@@ -18,6 +19,36 @@ from rich.progress import Progress, TaskID
 
 from braindump.config import RepoConfig, compute_file_hash
 from braindump.progress import StageStats, console, format_cost, get_result_cost, stage_progress
+
+# ============================================================================
+# Managed-block markers
+# ============================================================================
+
+# Every generated file wraps its content between these markers so `apply` can
+# splice braindump's output into a file that also holds hand-written content,
+# replacing only the managed region.
+BLOCK_OPEN = "<!-- braindump: rules extracted from PR review patterns -->"
+BLOCK_CLOSE = "<!-- /braindump -->"
+_BLOCK_OPEN_RE = re.compile(r"<!--\s*braindump\b[^>]*-->", re.IGNORECASE)
+_BLOCK_CLOSE_RE = re.compile(r"<!--\s*/braindump\s*-->", re.IGNORECASE)
+
+
+def merge_braindump_block(existing: str, generated: str) -> str:
+    """Splice a braindump-generated file into existing file content.
+
+    `generated` is a full file fenced by the open/close markers. Content
+    outside the markers in `existing` is preserved — only the fenced region is
+    replaced. If `existing` has no markers, the block is appended after it.
+    """
+    open_m = _BLOCK_OPEN_RE.search(existing)
+    close_m = _BLOCK_CLOSE_RE.search(existing)
+    if open_m and close_m and close_m.end() > open_m.start():
+        return existing[: open_m.start()] + generated + existing[close_m.end() :]
+    if not existing.strip():
+        return generated
+    prefix = existing if existing.endswith("\n") else existing + "\n"
+    return f"{prefix}\n{generated}"
+
 
 # ============================================================================
 # Models
@@ -302,7 +333,7 @@ def generate_agents_md(
     subdirectories: list[str] | None = None,
 ) -> str:
     lines = []
-    lines.append("<!-- braindump: rules extracted from PR review patterns -->")
+    lines.append(BLOCK_OPEN)
     lines.append("")
     if location == "root":
         lines.append("# Coding Guidelines")
@@ -345,7 +376,7 @@ def generate_agents_md(
                     lines.append(format_rule_line(rid, rephrased[rid]))
             lines.append("")
 
-    lines.append("<!-- /braindump -->")
+    lines.append(BLOCK_CLOSE)
     return "\n".join(lines)
 
 
@@ -355,6 +386,8 @@ def generate_topic_doc(
     placements: dict[int, dict],
 ) -> str:
     lines = []
+    lines.append(BLOCK_OPEN)
+    lines.append("")
     lines.append(f"# {topic['topic_name']}")
     lines.append("")
     lines.append(f"> {topic['topic_description']}")
@@ -367,6 +400,7 @@ def generate_topic_doc(
         if rid in rephrased:
             lines.append(format_rule_line(rid, rephrased[rid]))
     lines.append("")
+    lines.append(BLOCK_CLOSE)
     return "\n".join(lines)
 
 

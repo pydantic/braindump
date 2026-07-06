@@ -78,6 +78,7 @@ class RuleOutput(BaseModel):
     source_comments: list[int]
     source_prs: list[int]
     unique_pr_count: int
+    reaction_net: int = 0
     cluster_coherence: float
     common_pattern: str
 
@@ -86,10 +87,25 @@ class RuleOutput(BaseModel):
 PR_FACTORS: dict[int, float] = {1: 0.6, 2: 0.85, 3: 0.95}
 PR_FACTOR_DEFAULT: float = 1.0  # 4+ PRs
 
+# Multiplier for the net human reaction verdict on a rule's source comments.
+# Endorsed lifts a rule (can rescue a low-PR bot rule above min_score); vetoed
+# sinks it (can push it below the placement floor).
+REACTION_FACTOR_ENDORSED = 1.25
+REACTION_FACTOR_NEUTRAL = 1.0
+REACTION_FACTOR_VETOED = 0.4
 
-def calculate_rule_score(confidence: float, unique_prs: int) -> float:
+
+def reaction_factor(reaction_net: int) -> float:
+    if reaction_net > 0:
+        return REACTION_FACTOR_ENDORSED
+    if reaction_net < 0:
+        return REACTION_FACTOR_VETOED
+    return REACTION_FACTOR_NEUTRAL
+
+
+def calculate_rule_score(confidence: float, unique_prs: int, reaction_net: int = 0) -> float:
     pr_factor = PR_FACTORS.get(unique_prs, PR_FACTOR_DEFAULT)
-    return min(1.0, confidence * pr_factor)
+    return min(1.0, confidence * pr_factor * reaction_factor(reaction_net))
 
 
 # ============================================================================
@@ -208,6 +224,7 @@ class GeneralizationItem:
         pr_number: int,
         source_change_index: int,
         source_context: dict,
+        reaction_signal: int = 0,
     ):
         self.generalization = generalization
         self.motivation = motivation
@@ -216,6 +233,7 @@ class GeneralizationItem:
         self.pr_number = pr_number
         self.source_change_index = source_change_index
         self.source_context = source_context
+        self.reaction_signal = reaction_signal
         self.embedding: list[float] | None = None
 
 
@@ -237,7 +255,9 @@ def load_extractions(input_path: Path) -> list[dict]:
         for line in f:
             if line.strip():
                 ext = json.loads(line)
-                if is_bot_author(ext.get("author", "")):
+                # Drop bot-authored extractions, except those a human endorsed
+                # (reclaimed in the extract stage, carried via reaction_signal).
+                if is_bot_author(ext.get("author", "")) and ext.get("reaction_signal", 0) <= 0:
                     continue
                 extractions.append(ext)
     return extractions
@@ -251,6 +271,7 @@ def extract_generalizations(extractions: list[dict]) -> list[GeneralizationItem]
         comment_id = ext["comment_id"]
         pr_number = ext["pr_number"]
         source_context = ext.get("source", {})
+        signal = ext.get("reaction_signal", 0)
         for rule in ext.get("potential_rules", []):
             gen = rule.get("generalization", "")
             if not gen:
@@ -263,6 +284,7 @@ def extract_generalizations(extractions: list[dict]) -> list[GeneralizationItem]
                 pr_number=pr_number,
                 source_change_index=rule.get("source_change_index", 0),
                 source_context=source_context,
+                reaction_signal=signal,
             )
             items.append(item)
     return items
@@ -692,8 +714,11 @@ async def process_all_clusters(
                         progress.advance(task_id)
                 return
 
-        # Build comment_id -> pr_number mapping from cluster items
+        # Build comment_id -> pr_number / reaction mappings from cluster items
         comment_to_pr: dict[int, int] = {item.comment_id: item.pr_number for item in cluster}
+        comment_to_signal: dict[int, int] = {
+            item.comment_id: item.reaction_signal for item in cluster
+        }
         cluster_comment_ids_set = set(comment_ids)
 
         async with write_lock:
@@ -738,7 +763,12 @@ async def process_all_clusters(
                         rule_pr_numbers = pr_numbers
                         rule_unique_pr_count = unique_pr_count
 
-                    score = calculate_rule_score(rule.confidence, rule_unique_pr_count)
+                    rule_reaction_net = sum(
+                        comment_to_signal.get(cid, 0) for cid in rule_comment_ids
+                    )
+                    score = calculate_rule_score(
+                        rule.confidence, rule_unique_pr_count, rule_reaction_net
+                    )
                     rule_output = RuleOutput(
                         rule_id=rule_id,
                         cluster_id=i,
@@ -754,6 +784,7 @@ async def process_all_clusters(
                         source_comments=rule_comment_ids,
                         source_prs=rule_pr_numbers,
                         unique_pr_count=rule_unique_pr_count,
+                        reaction_net=rule_reaction_net,
                         cluster_coherence=analysis.cluster_coherence,
                         common_pattern=analysis.common_pattern,
                     )

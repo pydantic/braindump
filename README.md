@@ -16,8 +16,8 @@ GitHub PR reviews → download → extract → synthesize → dedupe → place �
 ```
 
 1. **Download** — fetch PR data (reviews, comments, diffs) via `gh` CLI
-2. **Extract** — use Claude to identify actionable changes and generalizable rules from each comment (bot comments are filtered out automatically)
-3. **Synthesize** — embed generalizations, cluster by similarity, extract validated rules. Each rule is scored based on the LLM's confidence multiplied by a factor for how many unique PRs the rule's evidence spans (1 PR = 0.6×, 2 = 0.85×, 3 = 0.95×, 4+ = 1.0×), so rules that came up across more reviews score higher.
+2. **Extract** — use Claude to identify actionable changes and generalizable rules from each comment. Bot comments are filtered out automatically, *except* those a human has endorsed with a 👍 reaction — a thumbs-up reclaims a bot's autoreview comment as human-vetted signal (see [Reactions](#reactions))
+3. **Synthesize** — embed generalizations, cluster by similarity, extract validated rules. Each rule is scored based on the LLM's confidence multiplied by a factor for how many unique PRs the rule's evidence spans (1 PR = 0.6×, 2 = 0.85×, 3 = 0.95×, 4+ = 1.0×), so rules that came up across more reviews score higher. A [reaction](#reactions) factor then adjusts the score: rules whose source comments were endorsed (👍) are boosted (1.25×), vetoed (👎) are penalized (0.4×).
 4. **Dedupe** — three-pass deduplication (embedding clusters + category review + post-consolidation review)
 5. **Place** — determine where each rule belongs (root, directory, file, cross-file), filtering by `min_score` floor (default 0.5)
 6. **Group** — filter by `min_score` threshold (default 0.5) and organize by topic for progressive disclosure
@@ -123,6 +123,7 @@ uv run braindump --repo owner/repo run [--from STAGE] [--skip STAGE ...] [--sinc
 - `--authors`: Author filter for extract (default: `all`)
 - `--min-score`: Override rule score threshold (default: 0.5)
 - `--max-rules N`: Cap the number of rules in group stage (top-scored)
+- `--reaction-authors`: Comma-separated logins whose 👍/👎 reactions count (default: anyone). See [Reactions](#reactions)
 - `--fresh`: Wipe all stage outputs and start from scratch
 
 ### `download` — Fetch PR data
@@ -140,6 +141,7 @@ uv run braindump --repo owner/repo extract [--authors USER] [--limit N] [--rando
 - `--prs`: Filter to specific PR numbers (comma-separated)
 - `--limit N`: Limit number of comments to process
 - `--random`: Randomly sample comments (with `--seed` for reproducibility)
+- `--reaction-authors`: Comma-separated logins whose 👍/👎 reactions count (default: anyone). See [Reactions](#reactions)
 
 ### `synthesize` — Cluster and validate rules
 
@@ -182,6 +184,25 @@ uv run braindump --repo owner/repo run --from group --max-rules 80
 uv run braindump --repo owner/repo generate [--dry-run] [--concurrency 10]
 ```
 
+### `apply` — Merge generated files into a repo
+
+`generate` writes to the staging directory (`data/<owner>/<repo>/7-generate/`). `apply` merges those files into an actual repo **without clobbering hand-written content**:
+
+```bash
+uv run braindump --repo owner/repo apply --into /path/to/repo [--dry-run]
+```
+
+Every generated file wraps braindump's output between `<!-- braindump: ... -->` and `<!-- /braindump -->` markers. When merging:
+
+- If the target file already has these markers → only the fenced block is replaced; anything you wrote above or below it is preserved.
+- If the target exists without markers → the block is appended after your content.
+- If the target doesn't exist → it's created.
+
+This applies uniformly to `AGENTS.md` and topic docs under `agent_docs/`, so it's safe to keep your own additions in any of them. Files braindump doesn't generate are never touched. Use `--dry-run` to preview which files would be created/merged/left unchanged.
+
+> [!NOTE]
+> Edits made *inside* the fenced block are overwritten on the next `apply`. Keep your hand-written content outside the markers.
+
 ### `status` — Pipeline status
 
 ```bash
@@ -206,7 +227,7 @@ All per-repo data lives under `data/<owner>/<repo>/`:
 data/
   pydantic/
     pydantic-ai/
-      1-download/         # Raw GitHub API data (PRs, diffs, review comments)
+      1-download/         # Raw GitHub API data (PRs, diffs, review comments, reactions)
       2-extract/          # extractions.jsonl, checkpoint.json
       3-synthesize/       # rules.jsonl, embeddings, clusters
       4-dedupe/           # rules.jsonl (deduped), embeddings, merge_log
@@ -231,6 +252,25 @@ Overrides cluster with similar extracted rules and replace them during the `dedu
 
 ```bash
 uv run braindump --repo owner/repo run --from dedupe --fresh
+```
+
+## Reactions
+
+A 👍/👎 reaction on a review comment is an explicit human verdict on that comment — the highest-precision signal in the pipeline. `download` fetches reaction attribution (who reacted) for any comment that has reactions, and it feeds two things:
+
+- **Reclaiming bot comments.** Bot autoreview comments (e.g. `github-actions[bot]`, `coderabbitai[bot]`) are normally filtered out. But if you 👍 one, it's reclaimed and its rules flow into the pipeline as human-vetted signal. This lets you curate a bot reviewer's output by simply reacting to the good comments.
+- **Scoring.** The net thumbs signal (👍 minus 👎) across a rule's source comments adjusts its score: endorsed rules are boosted (1.25×), vetoed rules penalized (0.4×). An endorsed rule from a single PR can clear the score floor it would otherwise miss; a vetoed rule can drop below it and be excluded.
+
+By default any user's reactions count. Use `--reaction-authors` to restrict this to specific logins (e.g. maintainers):
+
+```bash
+uv run braindump --repo owner/repo run --reaction-authors alice,bob
+```
+
+Reactions are captured at `download`, but the allowlist is applied at `extract`, so changing `--reaction-authors` only requires re-running from extract — no re-download:
+
+```bash
+uv run braindump --repo owner/repo run --from extract --reaction-authors alice
 ```
 
 ## Model configuration

@@ -16,6 +16,7 @@ from rich.progress import Progress, TaskID
 
 from braindump.config import RepoConfig, compute_multi_file_hash
 from braindump.progress import StageStats, console, format_cost, get_result_cost, stage_progress
+from braindump.reactions import parse_reaction_authors, reaction_signal
 
 # ============================================================================
 # Models
@@ -64,6 +65,7 @@ class ExtractionOutput(BaseModel):
     comment_id: int
     pr_number: int
     author: str
+    reaction_signal: int = 0
     is_actionable: bool
     rejection_reason: str | None = None
     rejection_explanation: str | None = None
@@ -196,26 +198,41 @@ def get_agent() -> Agent[None, CommentExtraction]:
 # ============================================================================
 
 
-def load_comments(review_dir: Path) -> list[dict]:
+def load_comments(review_dir: Path, reactions_dir: Path | None = None) -> list[dict]:
     all_comments = []
     for filepath in sorted(review_dir.glob("*.json")):
         with open(filepath) as f:
             comments = json.load(f)
-            pr_number = int(filepath.stem)
-            for comment in comments:
-                comment["_pr_number"] = pr_number
-                all_comments.append(comment)
+        pr_number = int(filepath.stem)
+        reactions = {}
+        if reactions_dir is not None:
+            reactions_file = reactions_dir / filepath.name
+            if reactions_file.exists():
+                reactions = json.loads(reactions_file.read_text())
+        for comment in comments:
+            comment["_pr_number"] = pr_number
+            comment["_reactions"] = reactions.get(str(comment["id"]), [])
+            all_comments.append(comment)
     return all_comments
 
 
+def is_bot_comment(comment: dict) -> bool:
+    user = comment.get("user", {})
+    return user.get("type") == "Bot" or user.get("login", "").endswith("[bot]")
+
+
+def annotate_reaction_signal(comments: list[dict], allowlist: set[str] | None) -> None:
+    """Attach `_reaction_signal` (allowlist-filtered net thumbs) to each comment."""
+    for c in comments:
+        c["_reaction_signal"] = reaction_signal(c.get("_reactions", []), allowlist)
+
+
 def filter_bots(comments: list[dict]) -> list[dict]:
-    """Exclude comments from bot accounts."""
-    return [
-        c
-        for c in comments
-        if c.get("user", {}).get("type") != "Bot"
-        and not c.get("user", {}).get("login", "").endswith("[bot]")
-    ]
+    """Exclude bot comments, except those a human has endorsed with a 👍.
+
+    Requires `annotate_reaction_signal` to have run first.
+    """
+    return [c for c in comments if not is_bot_comment(c) or c.get("_reaction_signal", 0) > 0]
 
 
 def filter_by_author(comments: list[dict], author: str | None) -> list[dict]:
@@ -406,6 +423,7 @@ async def process_all(
                     comment_id=comment_id,
                     pr_number=pr_number,
                     author=author,
+                    reaction_signal=comment.get("_reaction_signal", 0),
                     is_actionable=result.is_actionable,
                     rejection_reason=result.rejection.reason if result.rejection else None,
                     rejection_explanation=result.rejection.explanation
@@ -482,6 +500,7 @@ def _run(
     seed: int = 42,
     prs: str | None = None,
     concurrency: int = 10,
+    reaction_authors: str | None = None,
     is_pipeline: bool = False,
     fresh: bool = False,
 ) -> StageStats | None:
@@ -489,6 +508,7 @@ def _run(
     import shutil
 
     review_dir = config.review_comments_dir
+    reactions_dir = config.review_comment_reactions_dir
     output_dir = config.stage_dir("2-extract")
 
     # Input hash: detect if download data changed
@@ -512,13 +532,21 @@ def _run(
 
     if not is_pipeline:
         console.print("Loading comments...")
-    all_comments = load_comments(review_dir)
+    all_comments = load_comments(review_dir, reactions_dir)
     if not is_pipeline:
         console.print(f"Loaded {len(all_comments)} total comments")
 
+    allowlist = parse_reaction_authors(reaction_authors)
+    annotate_reaction_signal(all_comments, allowlist)
+    before_bots = len(all_comments)
     all_comments = filter_bots(all_comments)
+    reclaimed = sum(1 for c in all_comments if is_bot_comment(c))
     if not is_pipeline:
-        console.print(f"After excluding bots: {len(all_comments)} comments")
+        note = f" (reclaimed {reclaimed} endorsed bot comment(s))" if reclaimed else ""
+        console.print(
+            f"After excluding bots: {len(all_comments)} comments"
+            f" [dropped {before_bots - len(all_comments)}]{note}"
+        )
 
     if prs:
         pr_numbers = set(int(p.strip()) for p in prs.split(","))
@@ -580,6 +608,11 @@ def extract(
     seed: int = typer.Option(42, help="Random seed for reproducible sampling"),
     prs: str | None = typer.Option(None, help="Comma-separated list of PR numbers"),
     concurrency: int = typer.Option(10, help="Number of parallel LLM requests"),
+    reaction_authors: str | None = typer.Option(
+        None,
+        "--reaction-authors",
+        help="Comma-separated logins whose 👍/👎 reactions count (default: anyone)",
+    ),
     fresh: bool = typer.Option(False, "--fresh", help="Wipe output and start from scratch"),
 ) -> None:
     """Extract potential rules from review comments."""
@@ -597,5 +630,6 @@ def extract(
         seed=seed,
         prs=prs,
         concurrency=concurrency,
+        reaction_authors=reaction_authors,
         fresh=fresh,
     )

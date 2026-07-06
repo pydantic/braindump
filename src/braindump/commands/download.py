@@ -30,6 +30,42 @@ async def _gh_async(*args: str) -> tuple[int, str, str]:
     return proc.returncode or 0, stdout.decode(), stderr.decode()
 
 
+async def _fetch_reactions(repo: str, output_dir, pr_num: int, comments_json: str) -> None:
+    """Fetch reactor attribution for a PR's reacted review comments → sidecar.
+
+    Writes ``review_comment_reactions/{pr_num}.json`` mapping comment id (str)
+    to a list of ``{"content", "user"}`` entries. Comments with no reactions are
+    skipped, so the file is empty ``{}`` for most PRs.
+    """
+    try:
+        comments = json.loads(comments_json)
+    except json.JSONDecodeError:
+        comments = []
+
+    reactions_by_comment: dict[str, list[dict]] = {}
+    for c in comments:
+        if c.get("reactions", {}).get("total_count", 0) <= 0:
+            continue
+        cid = c["id"]
+        with logfire.span("fetch reactions: comment {cid}", cid=cid):
+            rc, stdout, _ = await _gh_async(
+                "api", f"repos/{repo}/pulls/comments/{cid}/reactions", "--paginate"
+            )
+        if rc != 0:
+            continue
+        try:
+            entries = json.loads(stdout)
+        except json.JSONDecodeError:
+            entries = []
+        reactions_by_comment[str(cid)] = [
+            {"content": e.get("content"), "user": e.get("user", {}).get("login")} for e in entries
+        ]
+
+    (output_dir / "review_comment_reactions" / f"{pr_num}.json").write_text(
+        json.dumps(reactions_by_comment)
+    )
+
+
 @logfire.instrument("download", extract_args={"config": ["repo"]})
 def _run(
     config: RepoConfig,
@@ -54,7 +90,14 @@ def _run(
         shutil.rmtree(output_dir)
 
     # Create directories
-    for subdir in ["prs", "reviews", "review_comments", "diffs", "issue_comments"]:
+    for subdir in [
+        "prs",
+        "reviews",
+        "review_comments",
+        "review_comment_reactions",
+        "diffs",
+        "issue_comments",
+    ]:
         (output_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     # Build search filter
@@ -105,12 +148,13 @@ async def _async_download(
     semaphore = asyncio.Semaphore(concurrency)
 
     def _pr_already_downloaded(pr_num: int) -> bool:
-        """Check if all 5 expected files exist for a PR."""
+        """Check if all expected files exist for a PR."""
         return all(
             [
                 (output_dir / "prs" / f"{pr_num}.json").exists(),
                 (output_dir / "reviews" / f"{pr_num}.json").exists(),
                 (output_dir / "review_comments" / f"{pr_num}.json").exists(),
+                (output_dir / "review_comment_reactions" / f"{pr_num}.json").exists(),
                 (output_dir / "diffs" / f"{pr_num}.diff").exists(),
                 (output_dir / "issue_comments" / f"{pr_num}.json").exists(),
             ]
@@ -158,6 +202,12 @@ async def _async_download(
                             pr_num=pr_num,
                             stderr=stderr[:200],
                         )
+
+                # Reaction attribution: for comments that carry reactions, fetch
+                # who reacted (a 👍/👎 is an explicit human verdict on the comment).
+                # Only reacted comments are queried, so this is cheap.
+                if rc == 0:
+                    await _fetch_reactions(repo, output_dir, pr_num, stdout)
 
                 # Diff
                 with logfire.span("fetch diff: #{pr_num}", pr_num=pr_num):

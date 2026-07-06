@@ -198,6 +198,7 @@ def load_overrides(overrides_path: Path) -> list[dict]:
                     "source_comments": [],
                     "source_prs": [],
                     "unique_pr_count": 5,
+                    "reaction_net": 0,
                     "cluster_coherence": 1.0,
                     "common_pattern": "",
                     "_is_override": True,
@@ -303,6 +304,7 @@ def _build_output_rules(
         combined_comments = list({c for r in source_rules for c in r["source_comments"]})
         combined_prs = sorted({p for r in source_rules for p in r["source_prs"]})
         unique_pr_count = len(combined_prs)
+        combined_reaction_net = sum(r.get("reaction_net", 0) for r in source_rules)
         # Pick the lowest unused source rule ID to avoid duplicates
         # when the LLM references overlapping sources across output rules
         available_ids = sorted(r["rule_id"] for r in source_rules)
@@ -327,7 +329,9 @@ def _build_output_rules(
             "text": consolidated.text,
             "reason": consolidated.reason,
             "confidence": consolidated.confidence,
-            "rule_score": calculate_rule_score(consolidated.confidence, unique_pr_count),
+            "rule_score": calculate_rule_score(
+                consolidated.confidence, unique_pr_count, combined_reaction_net
+            ),
             "category": consolidated.category,
             "scope": consolidated.scope,
             "example_bad": example_bad,
@@ -336,6 +340,7 @@ def _build_output_rules(
             "source_comments": combined_comments,
             "source_prs": combined_prs,
             "unique_pr_count": unique_pr_count,
+            "reaction_net": combined_reaction_net,
             "cluster_coherence": max(r.get("cluster_coherence", 0) for r in source_rules),
             "common_pattern": best_source.get("common_pattern", ""),
             "_merged_from": sorted(r["rule_id"] for r in source_rules),
@@ -356,6 +361,7 @@ async def consolidate_cluster(cluster_rules: list[dict]) -> tuple[list[dict], De
         combined_comments = list({c for r in extracted for c in r.get("source_comments", [])})
         combined_prs = sorted({p for r in extracted for p in r.get("source_prs", [])})
         unique_pr_count = max(len(combined_prs), override["unique_pr_count"])
+        combined_reaction_net = sum(r.get("reaction_net", 0) for r in extracted)
         example_bad = override.get("example_bad")
         example_good = override.get("example_good")
         for r in extracted:
@@ -382,7 +388,9 @@ async def consolidate_cluster(cluster_rules: list[dict]) -> tuple[list[dict], De
             "text": override["text"],
             "reason": override["reason"],
             "confidence": override["confidence"],
-            "rule_score": calculate_rule_score(override["confidence"], unique_pr_count),
+            "rule_score": calculate_rule_score(
+                override["confidence"], unique_pr_count, combined_reaction_net
+            ),
             "category": category,
             "scope": scope,
             "example_bad": example_bad,
@@ -391,6 +399,7 @@ async def consolidate_cluster(cluster_rules: list[dict]) -> tuple[list[dict], De
             "source_comments": combined_comments,
             "source_prs": combined_prs,
             "unique_pr_count": unique_pr_count,
+            "reaction_net": combined_reaction_net,
             "cluster_coherence": max(
                 (r.get("cluster_coherence", 0) for r in extracted), default=1.0
             ),

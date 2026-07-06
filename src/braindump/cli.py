@@ -51,6 +51,7 @@ def main(
 
 
 # Register all commands
+from braindump.commands.apply import apply as _apply  # noqa: E402
 from braindump.commands.dedupe import dedupe as _dedupe  # noqa: E402
 from braindump.commands.download import download as _download  # noqa: E402
 from braindump.commands.extract import extract as _extract  # noqa: E402
@@ -69,6 +70,7 @@ app.command(name="dedupe")(_dedupe)
 app.command(name="place")(_place)
 app.command(name="group")(_group)
 app.command(name="generate")(_generate)
+app.command(name="apply")(_apply)
 app.command(name="run")(_run)
 app.command(name="lookup")(_lookup)
 app.command(name="status")(_status)
