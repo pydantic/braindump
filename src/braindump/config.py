@@ -125,6 +125,10 @@ class RepoConfig:
         return self.pr_data_dir / "review_comments"
 
     @property
+    def review_comment_reactions_dir(self) -> Path:
+        return self.pr_data_dir / "review_comment_reactions"
+
+    @property
     def extractions_path(self) -> Path:
         return self.stage_dir("2-extract") / "extractions.jsonl"
 

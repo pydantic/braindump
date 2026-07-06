@@ -49,6 +49,11 @@ def run(
     ),
     skip: list[str] | None = typer.Option(None, help="Skip specific stages (repeatable)"),
     authors: str = typer.Option("all", help="Author filter for extract stage"),
+    reaction_authors: str | None = typer.Option(
+        None,
+        "--reaction-authors",
+        help="Comma-separated logins whose 👍/👎 reactions count (default: anyone)",
+    ),
     since: str | None = typer.Option(None, help="Date filter for download stage (YYYY-MM-DD)"),
     min_score: float | None = typer.Option(None, help="Minimum rule score (default: 0.5)"),
     max_rules: int | None = typer.Option(
@@ -91,7 +96,13 @@ def run(
                 elif stage == "extract":
                     from braindump.commands.extract import _run as extract_run
 
-                    stats = extract_run(config, authors=authors, is_pipeline=True, fresh=fresh)
+                    stats = extract_run(
+                        config,
+                        authors=authors,
+                        reaction_authors=reaction_authors,
+                        is_pipeline=True,
+                        fresh=fresh,
+                    )
 
                 elif stage == "synthesize":
                     from braindump.commands.synthesize import _run as synthesize_run
